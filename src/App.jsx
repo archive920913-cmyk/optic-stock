@@ -1,8 +1,9 @@
 // @ts-nocheck
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import * as XLSX from "xlsx";
 
 const VERSION = "3.0.0";
+const STORAGE_KEY = "OPTIC_STOCK_DATA_V3";
 const ALL_COLORS = ["블랙","화이트","실버","골드","브라운","네이비","레드","그린","핑크","투명","퍼플","오렌지","베이지","그레이","옐로우"];
 const CATEGORIES = ["일반안경","선글라스"];
 const PAY_METHODS = ["현금","계좌이체","카드","어음","기타"];
@@ -87,6 +88,53 @@ export default function App(){
   const [toast,setToast]=useState(null);
   const notify=(msg,type="s")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
 
+  // LocalStorage Loading
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const d = JSON.parse(saved);
+        if (d.version !== VERSION) {
+          notify(`⚠️ 버전 차이 알림 (앱:${VERSION} / 저장:${d.version})`, "w");
+          // 버전이 다르면 무시할 수도 있고, 마이그레이션할 수도 있음. 여기서는 무시하지 않고 일단 로드 시도
+        }
+        if (d.onlineChs) setOnlineChs(d.onlineChs);
+        if (d.offlineChs) setOfflineChs(d.offlineChs);
+        if (d.products) setProducts(d.products);
+        if (d.prices) setPrices(d.prices);
+        if (d.stock) setStock(d.stock);
+        if (d.txns) setTxns(d.txns);
+        if (d.settles) setSettles(d.settles);
+        if (d.partners) setPartners(d.partners);
+        if (d.chPartner) setChPartner(d.chPartner);
+        console.log("Data restored from localStorage", d.savedAt);
+      } catch (e) {
+        console.error("Failed to parse localStorage data", e);
+      }
+    }
+  }, []);
+
+  // LocalStorage Auto-save (Debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const data = {
+        version: VERSION,
+        savedAt: new Date().toISOString(),
+        onlineChs,
+        offlineChs,
+        products,
+        prices,
+        stock,
+        txns,
+        settles,
+        partners,
+        chPartner,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [onlineChs, offlineChs, products, prices, stock, txns, settles, partners, chPartner]);
+
   const warehouseTotal=useMemo(()=>{const t={};products.forEach(p=>{t[p.id]=0;(p.colors||[]).forEach(c=>{t[p.id]+=(stock[p.id]?.[c]?.warehouse??0);});});return t;},[stock,products]);
   const channelTotal=useMemo(()=>{const t={};products.forEach(p=>{t[p.id]={};allChs.forEach(ch=>{t[p.id][ch]=0;(p.colors||[]).forEach(c=>{t[p.id][ch]+=(stock[p.id]?.[c]?.[ch]??0);});});});return t;},[stock,products,allChs]);
 
@@ -109,7 +157,6 @@ export default function App(){
 
   const addTxn=useCallback((txn)=>{const nt={...txn,id:`T${uid()}`,date:tod()};setTxns(prev=>[nt,...prev]);applyStock(nt);notify("✅ 처리 완료");},[applyStock]);
   
-  // 5번 기능: 이력 취소 및 재고 롤백
   const cancelTxn=useCallback((txnId)=>{
       const txn = txns.find(t=>t.id===txnId);
       if(!txn) return;
@@ -127,7 +174,7 @@ export default function App(){
 
   const backup=()=>{const data={version:VERSION,date:tod(),products,prices,stock,txns,settles,partners,chPartner,onlineChs,offlineChs};const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));a.download=`opticstock_${tod()}.json`;a.click();notify("📦 백업 저장 완료");};
   const restRef=useRef();
-  const restore=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.products)setProducts(d.products);if(d.prices)setPrices(d.prices);if(d.stock)setStock(d.stock);if(d.txns)setTxns(d.txns);if(d.settles)setSettles(d.settles);if(d.partners)setPartners(d.partners);if(d.chPartner)setChPartner(d.chPartner);if(d.onlineChs)setOnlineChs(d.onlineChs);if(d.offlineChs)setOfflineChs(d.offlineChs);notify("✅ 데이터 복원 완료");}catch{notify("❌ 파일 오류","e");}};r.readAsText(file);e.target.value="";};
+  const restore=e=>{const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.version && d.version !== VERSION){ if(!window.confirm(`파일 버전(${d.version})이 현재 앱 버전(${VERSION})과 다릅니다. 그래도 진행할까요?`)) return; } if(d.products)setProducts(d.products);if(d.prices)setPrices(d.prices);if(d.stock)setStock(d.stock);if(d.txns)setTxns(d.txns);if(d.settles)setSettles(d.settles);if(d.partners)setPartners(d.partners);if(d.chPartner)setChPartner(d.chPartner);if(d.onlineChs)setOnlineChs(d.onlineChs);if(d.offlineChs)setOfflineChs(d.offlineChs);notify("✅ 데이터 복원 완료");}catch{notify("❌ 파일 오류","e");}};r.readAsText(file);e.target.value="";};
 
   const TABS=[{id:"dashboard",label:"📊 대시보드"},{id:"products",label:"🗂️ 제품관리"},{id:"inventory",label:"📦 재고현황"},{id:"movement",label:"🔄 입출고"},{id:"history",label:"📋 이력"},{id:"partners",label:"🏢 거래처"},{id:"settle",label:"💳 수금관리"},{id:"prices",label:"💰 가격/마진"},{id:"search",label:"🔍 재고검색"},{id:"report",label:"📄 리포트"}];
   const ctx={products,prices,stock,txns,settles,partners,chPartner,allChs,onlineChs,offlineChs,warehouseTotal,channelTotal,addTxn,cancelTxn,saveProduct,delProduct,savePartner,delPartner,saveSettle,setChPartner,setPrices,notify};
@@ -418,15 +465,68 @@ function Movement({products,addTxn,offlineChs,allChs}){
 
 function Partners({partners,savePartner,delPartner,chPartner,setChPartner,allChs,notify}){
   const [modal,setModal]=useState(null);
-  const empty={id:`C${String(Date.now()).slice(-4)}`,name:"",bizNo:"",type:"온라인"};
+  const empty={id:`C${String(Date.now()).slice(-4)}`,name:"",bizNo:"",ceoName:"",address:"",phone:"",email:"",bankName:"",bankAccount:"",bizType:"",bizItem:"",notes:"",type:"온라인"};
+  
+  const handleSave = (p) => {
+    if(!p.name.trim()) return alert("거래처명은 필수입니다.");
+    if(p.email && !p.email.includes("@")) return alert("이메일 형식이 올바르지 않습니다.");
+    savePartner(p);
+    setModal(null);
+  };
+
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><h2 style={{fontSize:15,fontWeight:700}}>🏢 거래처 관리</h2><button onClick={()=>setModal({...empty})} style={{...S.btn("p"),fontSize:12}}>＋ 추가</button></div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:12}}>
-        {partners.map(p=>(<div key={p.id} style={{...S.card,padding:16}}><div style={{fontWeight:700,fontSize:14,marginBottom:5}}>{p.name}</div><div style={{display:"flex",gap:6}}><button onClick={()=>setModal({...p})} style={{...S.btn(""),flex:1,fontSize:11}}>✏️ 편집</button><button onClick={()=>delPartner(p.id)} style={{...S.btn("d"),flex:1,fontSize:11}}>🗑️</button></div></div>))}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <h2 style={{fontSize:15,fontWeight:700}}>🏢 거래처 관리</h2>
+        <button onClick={()=>setModal({...empty})} style={{...S.btn("p"),fontSize:12}}>＋ 신규 거래처</button>
       </div>
-      {modal&&<Modal title="거래처 편집" onClose={()=>setModal(null)}><label style={S.lbl}>거래처명</label><input style={{...S.inp,marginBottom:10}} value={modal.name||""} onChange={e=>setModal({...modal,name:e.target.value})}/><button onClick={()=>{savePartner(modal);setModal(null);}} style={{...S.btn("p"),width:"100%"}}>저장</button></Modal>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:12}}>
+        {partners.map(p=>(
+          <div key={p.id} style={{...S.card,padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>{p.name}</div>
+                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{p.type} · {p.bizNo||"사업자번호 없음"}</div>
+              </div>
+              <span style={{background:p.type==="온라인"?"#1e3a5f":"#78350f",color:p.type==="온라인"?"#93c5fd":"#fcd34d",padding:"2px 8px",borderRadius:20,fontSize:10}}>{p.type}</span>
+            </div>
+            {p.phone && <div style={{fontSize:12,color:"#94a3b8",marginBottom:4}}>📞 {p.phone}</div>}
+            {p.ceoName && <div style={{fontSize:12,color:"#94a3b8",marginBottom:10}}>👤 {p.ceoName}</div>}
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setModal({...p})} style={{...S.btn(""),flex:1,fontSize:11}}>✏️ 편집</button>
+              <button onClick={()=>{if(window.confirm("삭제하시겠습니까?")) delPartner(p.id)}} style={{...S.btn("d"),flex:1,fontSize:11}}>🗑️ 삭제</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {modal&&<PartnerEditModal partner={modal} onClose={()=>setModal(null)} onSave={handleSave}/>}
     </div>
+  );
+}
+
+function PartnerEditModal({partner,onClose,onSave}){
+  const [p,setP]=useState({...partner});
+  return(
+    <Modal title={partner.name?"거래처 편집":"신규 거래처"} onClose={onClose} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:18}}>
+        <div><label style={S.lbl}>거래처명 *</label><input style={S.inp} value={p.name} onChange={e=>setP({...p,name:e.target.value})} placeholder="상호명"/></div>
+        <div><label style={S.lbl}>사업자번호</label><input style={S.inp} value={p.bizNo} onChange={e=>setP({...p,bizNo:e.target.value})} placeholder="000-00-00000"/></div>
+        <div><label style={S.lbl}>대표자명</label><input style={S.inp} value={p.ceoName} onChange={e=>setP({...p,ceoName:e.target.value})}/></div>
+        <div><label style={S.lbl}>구분</label><select style={S.sel} value={p.type} onChange={e=>setP({...p,type:e.target.value})}><option>온라인</option><option>오프라인</option><option>기타</option></select></div>
+        <div><label style={S.lbl}>연락처</label><input style={S.inp} value={p.phone} onChange={e=>setP({...p,phone:e.target.value})}/></div>
+        <div><label style={S.lbl}>이메일</label><input style={S.inp} value={p.email} onChange={e=>setP({...p,email:e.target.value})}/></div>
+        <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>주소</label><input style={S.inp} value={p.address} onChange={e=>setP({...p,address:e.target.value})}/></div>
+        <div><label style={S.lbl}>은행명</label><input style={S.inp} value={p.bankName} onChange={e=>setP({...p,bankName:e.target.value})}/></div>
+        <div><label style={S.lbl}>계좌번호</label><input style={S.inp} value={p.bankAccount} onChange={e=>setP({...p,bankAccount:e.target.value})}/></div>
+        <div><label style={S.lbl}>업태</label><input style={S.inp} value={p.bizType} onChange={e=>setP({...p,bizType:e.target.value})}/></div>
+        <div><label style={S.lbl}>종목</label><input style={S.inp} value={p.bizItem} onChange={e=>setP({...p,bizItem:e.target.value})}/></div>
+        <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>메모</label><textarea style={{...S.inp, height:60, resize:"none"}} value={p.notes} onChange={e=>setP({...p,notes:e.target.value})}/></div>
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>onSave(p)} style={{...S.btn("p"),flex:1,padding:10}}>💾 저장</button>
+        <button onClick={onClose} style={{...S.btn(""),flex:1,padding:10}}>취소</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -441,6 +541,151 @@ function Prices({products,prices,setPrices,allChs,notify}){
   return(<div><h2 style={{fontSize:15,fontWeight:700}}>💰 가격/마진 관리</h2><p style={{fontSize:11,color:"#64748b"}}>기본 탭입니다.</p></div>);
 }
 
-function Report({txns}){
-  return(<div><h2 style={{fontSize:15,fontWeight:700}}>📄 리포트</h2><p style={{fontSize:11,color:"#64748b"}}>대시보드 통계 기능으로 통합되었습니다.</p></div>);
+function Report({txns, products, prices}){
+  const [range, setRange] = useState("이번달");
+  const [customRange, setCustomRange] = useState({start: tod(), end: tod()});
+  const [filterType, setFilterType] = useState("출고(판매)"); 
+  
+  const filteredTxns = useMemo(() => {
+    const now = new Date();
+    let start, end;
+    if (range === "오늘") {
+      start = end = tod();
+    } else if (range === "이번달") {
+      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+    } else if (range === "지난달") {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split("T")[0];
+      end = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split("T")[0];
+    } else if (range === "올해") {
+      start = `${now.getFullYear()}-01-01`;
+      end = `${now.getFullYear()}-12-31`;
+    } else if (range === "작년") {
+      start = `${now.getFullYear() - 1}-01-01`;
+      end = `${now.getFullYear() - 1}-12-31`;
+    } else {
+      start = customRange.start;
+      end = customRange.end;
+    }
+    
+    return txns.filter(t => {
+      const inDate = t.date >= start && t.date <= end;
+      const inType = filterType === "전체" || t.type === filterType;
+      return inDate && inType;
+    });
+  }, [txns, range, customRange, filterType]);
+
+  const stats = useMemo(() => {
+    let rev = 0, margin = 0, qty = 0;
+    filteredTxns.forEach(t => {
+      if (t.type === "출고(판매)") {
+        const p = products.find(x => x.id === t.productId);
+        const cost = p?.costPrice || 0;
+        const price = prices[t.productId]?.[t.channel] || 0;
+        rev += price * t.qty;
+        margin += (price - cost) * t.qty;
+        qty += t.qty;
+      }
+    });
+    return {rev, margin, qty};
+  }, [filteredTxns, products, prices]);
+
+  const doExport = () => {
+    const rows = [["날짜", "유형", "제품명", "색상", "판매처", "수량", "단가", "매출", "원가", "마진"]];
+    filteredTxns.forEach(t => {
+      const p = products.find(x => x.id === t.productId);
+      const cost = p?.costPrice || 0;
+      const price = prices[t.productId]?.[t.channel] || 0;
+      rows.push([
+        t.date, t.type, t.productName, t.color, t.channel, t.qty,
+        price, price * t.qty, cost, (price - cost) * t.qty
+      ]);
+    });
+    dlCSV(rows, `리포트_${range}_${tod()}.csv`);
+  };
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <h2 style={{fontSize:15,fontWeight:700}}>📄 리포트</h2>
+        <button onClick={doExport} style={S.btn("s")}>📥 CSV 다운로드</button>
+      </div>
+      
+      <div style={{...S.card, padding:16, marginBottom:16}}>
+        <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:12}}>
+          <div>
+            <label style={S.lbl}>기간 선택</label>
+            <select style={S.sel} value={range} onChange={e=>setRange(e.target.value)}>
+              {["오늘","이번달","지난달","올해","작년","사용자지정"].map(o=><option key={o}>{o}</option>)}
+            </select>
+          </div>
+          {range === "사용자지정" && (
+            <>
+              <div>
+                <label style={S.lbl}>시작일</label>
+                <input type="date" style={S.inp} value={customRange.start} onChange={e=>setCustomRange(prev=>({...prev, start: e.target.value}))} />
+              </div>
+              <div>
+                <label style={S.lbl}>종료일</label>
+                <input type="date" style={S.inp} value={customRange.end} onChange={e=>setCustomRange(prev=>({...prev, end: e.target.value}))} />
+              </div>
+            </>
+          )}
+          <div>
+            <label style={S.lbl}>거래유형</label>
+            <select style={S.sel} value={filterType} onChange={e=>setFilterType(e.target.value)}>
+              <option value="출고(판매)">출고(판매)만</option>
+              <option value="전체">전체 유형</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:"flex", gap:12, marginBottom:16}}>
+        <div style={{...S.card, padding:16, flex:1, textAlign:"center"}}>
+          <div style={{fontSize:11, color:"#64748b", marginBottom:4}}>총 매출</div>
+          <div style={{fontSize:20, fontWeight:800, color:"#a78bfa"}}>₩{fmt(stats.rev)}</div>
+        </div>
+        <div style={{...S.card, padding:16, flex:1, textAlign:"center"}}>
+          <div style={{fontSize:11, color:"#64748b", marginBottom:4}}>총 마진</div>
+          <div style={{fontSize:20, fontWeight:800, color:"#4ade80"}}>₩{fmt(stats.margin)}</div>
+        </div>
+        <div style={{...S.card, padding:16, flex:1, textAlign:"center"}}>
+          <div style={{fontSize:11, color:"#64748b", marginBottom:4}}>총 판매량</div>
+          <div style={{fontSize:20, fontWeight:800, color:"#fbbf24"}}>{fmt(stats.qty)}개</div>
+        </div>
+      </div>
+
+      <div style={{...S.card, overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead>
+            <tr style={{background:"#161b2e"}}>
+              {["날짜","유형","제품명","색상","판매처","수량","매출","마진"].map(h=><th key={h} style={{padding:"8px 9px",textAlign:"left",color:"#64748b",borderBottom:"1px solid #2d3748"}}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredTxns.map(t => {
+              const p = products.find(x => x.id === t.productId);
+              const cost = p?.costPrice || 0;
+              const price = prices[t.productId]?.[t.channel] || 0;
+              const rev = price * t.qty;
+              const margin = (price - cost) * t.qty;
+              return (
+                <tr key={t.id} style={{borderBottom:"1px solid #1a2030"}}>
+                  <td style={{padding:"7px 9px"}}>{t.date}</td>
+                  <td style={{padding:"7px 9px"}}><span style={{...bdg(t.type),padding:"1px 6px",borderRadius:20,fontSize:10}}>{t.type}</span></td>
+                  <td style={{padding:"7px 9px"}}>{t.productName}</td>
+                  <td style={{padding:"7px 9px"}}>{t.color}</td>
+                  <td style={{padding:"7px 9px"}}>{t.channel}</td>
+                  <td style={{padding:"7px 9px"}}>{t.qty}</td>
+                  <td style={{padding:"7px 9px"}}>{t.type === "출고(판매)" ? `₩${fmt(rev)}` : "-"}</td>
+                  <td style={{padding:"7px 9px", color:margin>0?"#4ade80":"#f87171"}}>{t.type === "출고(판매)" ? `₩${fmt(margin)}` : "-"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
